@@ -1,15 +1,25 @@
 import numpy as np
+import pickle
+import random
 
 class Network:
 
     # input should be list of matrices
-    def __init__(self, input_data, num_output_neurons, expected_outputs=None, batch_size=16, learning_rate=0.5):
         # flat_input is a 2d array. An array of each input 
-        flat_input = self.__flatten_input(input_data) # Each item in list is an individual image
-        batched_data = self.__create_batches(flat_input, batch_size) 
-        num_hidden = self.__calc_hidden_neurons(batched_data[0][0].shape[0], num_output_neurons)
+    def __init__(self, input_data, num_output_neurons, training_labels, num_hidden=None, flatten=False, batch_size=16, learning_rate=0.5):
+        # if train:
+        #     self.__begin_training(input_data, num_output_neurons, training_labels, num_hidden, flatten, batch_size, learning_rate)
+        if flatten:
+            input_data = self.__flatten_input(input_data) # Each item in list is an individual image
 
-        __w1 = self.__weight_shape(batched_data[0][0].shape[0], num_hidden)
+        batched_training_data = self.__create_batches(input_data, batch_size)
+
+        batched_labels = self.__create_batches(training_labels, batch_size)
+
+        if num_hidden == None:
+            num_hidden = self.__calc_hidden_neurons(batched_training_data[0][0].shape[0], num_output_neurons)
+
+        __w1 = self.__weight_shape(batched_training_data[0][0].shape[0], num_hidden)
         __w2 = self.__weight_shape(num_hidden, num_output_neurons)
         self.__weights = [__w1, __w2]
 
@@ -19,24 +29,47 @@ class Network:
 
         # Tweak to work w batched data 
         # For loop and pass each batch as input
-        for batch in batched_data:
+        for i in range(len(batched_training_data)):
             # 1st item is list of dC/dw, 2nd item is list of dC/db
-            output_derivatives = self.__calc_w_b_derivatives(batch, self.__weights, self.__biases, expected_outputs)
+            output_derivatives = self.__calc_w_b_derivatives(batched_training_data[i], self.__weights, self.__biases, batched_labels[i])
             self.__weights = self.__stochastic_grad_descent(self.__weights, learning_rate, output_derivatives[0])
             self.__biases = self.__stochastic_grad_descent(self.__biases, learning_rate, output_derivatives[1])
-            print(":)")
+            print(f"Batch {i}/{len(batched_training_data)} is done ({i/len(batched_training_data) * 100}%)")
         
 
-    
-    def get_output(self):
-        return self.__output
+        # save weights & biases
 
-    # returns a list of batches, 3d list 
-    # first layer used to access each batch
-    # 2nd layer used to access each input in a batch
-    # 3rd layer used to access each piece of data in an input e.g. individual pixels of an img
+
+    def save_model(self, w_filename, b_filename):
+        with open(w_filename, 'wb') as file: 
+            pickle.dump(self.__weights, file)
+
+        with open(b_filename, 'wb') as file: 
+            pickle.dump(self.__biases, file)
+
+    #def __begin_training(self, input_data, num_output_neurons, training_labels, num_hidden=None, flatten=False, batch_size=16, learning_rate=0.5):
+    
+
+    def test_model(self, test_data, labels, w_filename, b_filename, batch_size):
+        with open(w_filename, 'rb') as file: 
+            weights = pickle.load(file)
+
+        with open(b_filename, 'rb') as file: 
+            biases = pickle.load(file)
+
+        batched_test_data = self.__create_batches(test_data, batch_size)
+        batched_labels = self.__create_batches(labels, batch_size)
+
+        #for i in range(len(batched_test_data)):
+
+
     def __create_batches(self, input, batch_size):
-        num_of_batches = len(input) // batch_size
+        '''Returns a 3D list of batches. \n
+        First layer is used to access each batch,
+        2nd layer used to access each input in a batch,
+        3rd layer used to access each piece of data in an input e.g. individual pixels of an img'''
+
+        #num_of_batches = len(input) // batch_size
         b = []
         list_of_b = []
         for i in range(len(input)):
@@ -44,13 +77,15 @@ class Network:
 
             # if the loop reaches the last item in the list 
             # or the number of items in a batch has been reached
-            if (i % num_of_batches == 0 and i != 0) or i == len(input) - 1:
+            if (i % batch_size == 0 and i != 0) or i == len(input) - 1:
                 list_of_b.append(b)
                 b = []
             
         return list_of_b
 
-    def __calc_w_b_derivatives(self, input, w, b, expected_vals):
+
+
+    def __calc_w_b_derivatives(self, input, w, b, input_labels):
         # looping through each input in a given batch
         w_der = [] # indexing is back to front compared to w & b
         b_der = []
@@ -63,11 +98,12 @@ class Network:
 
             a = [input[i]] # each item will contain a list of activitions for each neuron in a specific layer
 
+            # feeds forward
             for j in range(len(w)): # Loops over each layer l and calculates the activation of layer l+1
                 a.append(self.__sigmoid_func(w[j], a[j], b[j]))
 
             # calculates derivatives for output layer
-            cost_der = self.__calc_cost_derivative(expected_vals[i], a[-1])
+            cost_der = self.__calc_cost_derivative(input_labels[i], a[-1])
             e_l = self.__calc_output_error(cost_der, w[-1], b[-1], a[-2])
             w_der_batch.append(self.__w_jk_derivative(w[-1], a[-2], e_l))
             b_der_batch.append(e_l)
@@ -85,7 +121,6 @@ class Network:
 
             w_der.append(w_der_batch)
             b_der.append(b_der_batch)
-
 
         return (w_der, b_der)
 
@@ -127,13 +162,16 @@ class Network:
 
     def __weight_shape(self, first_layer, second_layer):
         # first layer represents edge, second layer represents neurons in second layer
-        return np.random.rand(int(second_layer), int(first_layer)) 
+        return np.random.uniform(-1, 1, (int(second_layer), int(first_layer)))
 
     def __bias_shape(self, weight_shape):
-        return np.random.rand(weight_shape.shape[0], 1)
+        return np.random.uniform(-1, 1, (weight_shape.shape[0], 1))
 
     def __sigmoid_func(self, w, x, b):
+        # got an overflow error when calc. e^-z. Look up 'RuntimeWarning: Overflow encountered in exp'
+        # for more info on why I changed the dtype of z
         z = np.dot(w, x) + b
+        z = z.astype('float128') 
         return 1/(1+np.exp(-z))
 
 
@@ -170,12 +208,12 @@ class Network:
 
         return w_derivate
 
-a = np.random.rand(2, 3)
-b = np.random.rand(2, 3)
-c = []
-c.append(a)
-c.append(b)
-c = np.array(c)
-e = [1, 0]
+# a = np.random.rand(2, 3)
+# b = np.random.rand(2, 3)
+# c = []
+# c.append(a)
+# c.append(b)
+# c = np.array(c)
+# e = [1, 0]
 
-n = Network(c, 1, batch_size=1, expected_outputs=e)
+# n = Network(c, 1, batch_size=1, expected_outputs=e)
